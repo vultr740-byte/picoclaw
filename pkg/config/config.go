@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -922,7 +923,7 @@ func LoadConfig(path string) (*Config, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			logger.WarnF("config file not found, using default config", map[string]any{"path": path})
-			return DefaultConfig(), nil
+			return finalizeLoadedConfig(DefaultConfig())
 		}
 		logger.Errorf("failed to read config file: %v", err)
 		return nil, err
@@ -937,7 +938,7 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if len(data) <= 10 {
 		logger.Warn(fmt.Sprintf("content is [%s]", string(data)))
-		return DefaultConfig(), nil
+		return finalizeLoadedConfig(DefaultConfig())
 	}
 
 	// Load config based on detected version
@@ -1015,15 +1016,22 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("unsupported config version: %d", versionInfo.Version)
 	}
 
-	if err = env.Parse(cfg); err != nil {
+	return finalizeLoadedConfig(cfg)
+}
+
+func finalizeLoadedConfig(cfg *Config) (*Config, error) {
+	if err := env.Parse(cfg); err != nil {
 		return nil, err
 	}
+
+	applyLegacyModelEnvAlias(cfg)
+	applyDefaultModelEnvOverride(cfg)
 
 	// Expand multi-key configs into separate entries for key-level failover
 	cfg.ModelList = expandMultiKeyModels(cfg.ModelList)
 
 	// Validate model_list for uniqueness and required fields
-	if err = cfg.ValidateModelList(); err != nil {
+	if err := cfg.ValidateModelList(); err != nil {
 		return nil, err
 	}
 
@@ -1034,6 +1042,90 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func applyLegacyModelEnvAlias(cfg *Config) {
+	if cfg.Agents.Defaults.ModelName != "" {
+		return
+	}
+	if legacyModel := strings.TrimSpace(os.Getenv("PICOCLAW_AGENTS_DEFAULTS_MODEL")); legacyModel != "" {
+		cfg.Agents.Defaults.ModelName = legacyModel
+	}
+}
+
+func applyDefaultModelEnvOverride(cfg *Config) {
+	modelID := strings.TrimSpace(os.Getenv("PICOCLAW_DEFAULT_MODEL"))
+	apiKey := strings.TrimSpace(os.Getenv("PICOCLAW_DEFAULT_MODEL_API_KEY"))
+	apiBase := strings.TrimSpace(os.Getenv("PICOCLAW_DEFAULT_MODEL_API_BASE"))
+	alias := strings.TrimSpace(os.Getenv("PICOCLAW_DEFAULT_MODEL_NAME"))
+
+	if modelID == "" && apiKey == "" && apiBase == "" && alias == "" {
+		return
+	}
+
+	if alias == "" {
+		alias = cfg.Agents.Defaults.ModelName
+	}
+	if alias == "" {
+		alias = modelID
+	}
+
+	if alias == "" {
+		alias = "default-model"
+	}
+
+	if modelID != "" {
+		cfg.Agents.Defaults.ModelName = alias
+	} else if cfg.Agents.Defaults.ModelName == "" {
+		cfg.Agents.Defaults.ModelName = alias
+	}
+
+	var target *ModelConfig
+	for _, model := range cfg.ModelList {
+		if model.ModelName == alias {
+			target = model
+			break
+		}
+	}
+
+	if target == nil {
+		target = &ModelConfig{
+			ModelName: alias,
+			Model:     modelID,
+			APIBase:   apiBase,
+		}
+		if apiKey != "" {
+			target.APIKeys = SimpleSecureStrings(apiKey)
+		}
+		if target.Model == "" {
+			target.Model = "openai/gpt-4.1-mini"
+		}
+		if target.APIBase == "" {
+			target.APIBase = "https://api.openai.com/v1"
+		}
+		target.Enabled = target.APIKey() != ""
+		cfg.ModelList = append(cfg.ModelList, target)
+		return
+	}
+
+	if modelID != "" {
+		target.Model = modelID
+	}
+	if apiBase != "" {
+		target.APIBase = apiBase
+	}
+	if apiKey != "" {
+		target.SetAPIKey(apiKey)
+	}
+	if target.Model == "" {
+		target.Model = "openai/gpt-4.1-mini"
+	}
+	if target.APIBase == "" {
+		target.APIBase = "https://api.openai.com/v1"
+	}
+	if target.APIKey() != "" {
+		target.Enabled = true
+	}
 }
 
 func makeBackup(path string) error {

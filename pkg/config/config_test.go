@@ -1450,6 +1450,129 @@ func TestResolveGatewayLogLevel_UsesEnvOverrideAndNormalizesInvalid(t *testing.T
 	}
 }
 
+func TestLoadConfig_UsesLegacyDefaultModelEnvAlias(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	data := `{"version":2,"model_list":[{"model_name":"legacy-model","model":"openai/gpt-4.1-mini","api_keys":["sk-test"]}]}`
+	if err := os.WriteFile(cfgPath, []byte(data), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	t.Setenv("PICOCLAW_AGENTS_DEFAULTS_MODEL", "legacy-model")
+
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error: %v", err)
+	}
+	if cfg.Agents.Defaults.ModelName != "legacy-model" {
+		t.Fatalf("default model = %q, want %q", cfg.Agents.Defaults.ModelName, "legacy-model")
+	}
+}
+
+func TestLoadConfig_UsesSplitDefaultModelEnvWhenConfigMissing(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "missing.json")
+
+	t.Setenv("PICOCLAW_DEFAULT_MODEL", "gpt-4.1-mini")
+	t.Setenv("PICOCLAW_DEFAULT_MODEL_API_KEY", "sk-split-env")
+	t.Setenv("PICOCLAW_DEFAULT_MODEL_API_BASE", "https://proxy.example.com/v1")
+
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error: %v", err)
+	}
+	if cfg.Agents.Defaults.ModelName != "gpt-4.1-mini" {
+		t.Fatalf("default model = %q, want %q", cfg.Agents.Defaults.ModelName, "gpt-4.1-mini")
+	}
+	model, err := cfg.GetModelConfig("gpt-4.1-mini")
+	if err != nil {
+		t.Fatalf("GetModelConfig() error: %v", err)
+	}
+	if model.Model != "gpt-4.1-mini" {
+		t.Fatalf("model = %q, want %q", model.Model, "gpt-4.1-mini")
+	}
+	if model.APIBase != "https://proxy.example.com/v1" {
+		t.Fatalf("api_base = %q, want %q", model.APIBase, "https://proxy.example.com/v1")
+	}
+	if model.APIKey() != "sk-split-env" {
+		t.Fatalf("api_key = %q, want %q", model.APIKey(), "sk-split-env")
+	}
+}
+
+func TestLoadConfig_UsesSplitDefaultModelNameWhenProvided(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "missing.json")
+
+	t.Setenv("PICOCLAW_DEFAULT_MODEL_NAME", "railway-custom")
+	t.Setenv("PICOCLAW_DEFAULT_MODEL", "gpt-4.1-mini")
+	t.Setenv("PICOCLAW_DEFAULT_MODEL_API_KEY", "sk-split-env")
+	t.Setenv("PICOCLAW_DEFAULT_MODEL_API_BASE", "https://proxy.example.com/v1")
+
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error: %v", err)
+	}
+	if cfg.Agents.Defaults.ModelName != "railway-custom" {
+		t.Fatalf("default model = %q, want %q", cfg.Agents.Defaults.ModelName, "railway-custom")
+	}
+	model, err := cfg.GetModelConfig("railway-custom")
+	if err != nil {
+		t.Fatalf("GetModelConfig() error: %v", err)
+	}
+	if model.Model != "gpt-4.1-mini" {
+		t.Fatalf("model = %q, want %q", model.Model, "gpt-4.1-mini")
+	}
+}
+
+func TestLoadConfig_SplitDefaultModelDoesNotReplaceExistingModelList(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	data := `{"version":2,"model_list":[{"model_name":"existing","model":"openai/gpt-4.1-mini","api_key":"sk-old","api_base":"https://old.example.com/v1"}]}`
+	if err := os.WriteFile(cfgPath, []byte(data), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	t.Setenv("PICOCLAW_DEFAULT_MODEL", "gpt-5.4")
+	t.Setenv("PICOCLAW_DEFAULT_MODEL_API_KEY", "sk-new")
+	t.Setenv("PICOCLAW_DEFAULT_MODEL_API_BASE", "https://new.example.com/v1")
+
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error: %v", err)
+	}
+	if len(cfg.ModelList) != 2 {
+		t.Fatalf("len(ModelList) = %d, want 2", len(cfg.ModelList))
+	}
+	if _, err := cfg.GetModelConfig("existing"); err != nil {
+		t.Fatalf("existing model missing: %v", err)
+	}
+	if _, err := cfg.GetModelConfig("gpt-5.4"); err != nil {
+		t.Fatalf("new default model missing: %v", err)
+	}
+}
+
+func TestLoadConfig_UsesSplitDefaultModelEnvOverrideOnExistingAlias(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	data := `{"version":2,"agents":{"defaults":{"model_name":"existing"}},"model_list":[{"model_name":"existing","model":"openai/gpt-4.1-mini","api_key":"sk-old","api_base":"https://old.example.com/v1"}]}`
+	if err := os.WriteFile(cfgPath, []byte(data), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	t.Setenv("PICOCLAW_DEFAULT_MODEL_API_KEY", "sk-new")
+	t.Setenv("PICOCLAW_DEFAULT_MODEL_API_BASE", "https://new.example.com/v1")
+
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error: %v", err)
+	}
+	model, err := cfg.GetModelConfig("existing")
+	if err != nil {
+		t.Fatalf("GetModelConfig() error: %v", err)
+	}
+	if model.APIBase != "https://new.example.com/v1" {
+		t.Fatalf("api_base = %q, want %q", model.APIBase, "https://new.example.com/v1")
+	}
+	if model.APIKey() != "sk-new" {
+		t.Fatalf("api_key = %q, want %q", model.APIKey(), "sk-new")
+	}
+}
+
 func TestModelConfig_ExtraBodyRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")

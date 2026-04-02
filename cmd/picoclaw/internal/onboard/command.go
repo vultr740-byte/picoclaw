@@ -4,11 +4,10 @@ import (
 	"embed"
 
 	"github.com/spf13/cobra"
+	picoclaw "github.com/sipeed/picoclaw"
 )
 
-//go:generate cp -r ../../../../workspace .
-//go:embed workspace
-var embeddedFiles embed.FS
+var embeddedFiles embed.FS = picoclaw.EmbeddedWorkspace
 
 func NewOnboardCommand() *cobra.Command {
 	var encrypt bool

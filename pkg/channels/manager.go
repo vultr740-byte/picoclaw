@@ -86,6 +86,7 @@ type Manager struct {
 	dispatchTask  *asyncTask
 	mux           *dynamicServeMux
 	httpServer    *http.Server
+	healthServer  *health.Server
 	mu            sync.RWMutex
 	placeholders  sync.Map          // "channel:chatID" → placeholderID (string)
 	typingStops   sync.Map          // "channel:chatID" → func()
@@ -438,6 +439,7 @@ func (m *Manager) initChannels(channels *config.ChannelsConfig) error {
 // that implement WebhookHandler and/or HealthChecker to register their handlers.
 func (m *Manager) SetupHTTPServer(addr string, healthServer *health.Server) {
 	m.mux = newDynamicServeMux()
+	m.healthServer = healthServer
 
 	// Register health endpoints
 	if healthServer != nil {
@@ -576,16 +578,20 @@ func (m *Manager) StartAll(ctx context.Context) error {
 
 	// Start shared HTTP server if configured
 	if m.httpServer != nil {
+		httpServer := m.httpServer
 		go func() {
 			logger.InfoCF("channels", "Shared HTTP server listening", map[string]any{
-				"addr": m.httpServer.Addr,
+				"addr": httpServer.Addr,
 			})
-			if err := m.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				logger.FatalCF("channels", "Shared HTTP server error", map[string]any{
 					"error": err.Error(),
 				})
 			}
 		}()
+	}
+	if m.healthServer != nil {
+		m.healthServer.SetReady(true)
 	}
 
 	logger.InfoCF("channels", "Channel startup completed", map[string]any{
@@ -601,6 +607,10 @@ func (m *Manager) StopAll(ctx context.Context) error {
 	defer m.mu.Unlock()
 
 	logger.InfoC("channels", "Stopping all channels")
+
+	if m.healthServer != nil {
+		m.healthServer.SetReady(false)
+	}
 
 	// Shutdown shared HTTP server first
 	if m.httpServer != nil {

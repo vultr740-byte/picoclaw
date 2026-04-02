@@ -1,0 +1,35 @@
+FROM golang:1.25-alpine AS builder
+
+RUN apk add --no-cache git
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY embedded_workspace.go ./
+COPY cmd ./cmd
+COPY pkg ./pkg
+COPY workspace ./workspace
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -tags "goolm,stdjson" -ldflags "-s -w" \
+    -o /out/picoclaw ./cmd/picoclaw
+
+FROM alpine:3.23
+
+RUN apk add --no-cache ca-certificates tzdata curl
+
+ENV PICOCLAW_HOME=/data \
+    PICOCLAW_GATEWAY_HOST=0.0.0.0 \
+    PICOCLAW_GATEWAY_PORT=8080 \
+    PICOCLAW_GATEWAY_ALLOW_EMPTY=true
+
+COPY --from=builder /out/picoclaw /usr/local/bin/picoclaw
+COPY docker/railway-entrypoint.sh /usr/local/bin/railway-entrypoint
+
+RUN chmod +x /usr/local/bin/railway-entrypoint && \
+    mkdir -p /data
+
+EXPOSE 8080
+
+ENTRYPOINT ["railway-entrypoint"]

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,6 +15,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
+	"github.com/sipeed/picoclaw/pkg/health"
 )
 
 // mockChannel is a test double that delegates Send to a configurable function.
@@ -194,6 +197,45 @@ func TestStartAll_PartialFailure_StartsSuccessfulWorkers(t *testing.T) {
 	defer stopCancel()
 	if err := m.StopAll(stopCtx); err != nil {
 		t.Fatalf("StopAll() error = %v", err)
+	}
+}
+
+func TestSetupHTTPServer_TogglesHealthReadiness(t *testing.T) {
+	m := newTestManager()
+	m.channels["good"] = &mockChannel{}
+
+	healthServer := health.NewServer("127.0.0.1", 0, "")
+	m.SetupHTTPServer("127.0.0.1:0", healthServer)
+
+	notReadyReq := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	notReadyResp := httptest.NewRecorder()
+	m.mux.ServeHTTP(notReadyResp, notReadyReq)
+	if notReadyResp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("ready before StartAll = %d, want %d", notReadyResp.Code, http.StatusServiceUnavailable)
+	}
+
+	if err := m.StartAll(t.Context()); err != nil {
+		t.Fatalf("StartAll() error = %v", err)
+	}
+
+	readyReq := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	readyResp := httptest.NewRecorder()
+	m.mux.ServeHTTP(readyResp, readyReq)
+	if readyResp.Code != http.StatusOK {
+		t.Fatalf("ready after StartAll = %d, want %d", readyResp.Code, http.StatusOK)
+	}
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stopCancel()
+	if err := m.StopAll(stopCtx); err != nil {
+		t.Fatalf("StopAll() error = %v", err)
+	}
+
+	stoppedReq := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	stoppedResp := httptest.NewRecorder()
+	m.mux.ServeHTTP(stoppedResp, stoppedReq)
+	if stoppedResp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("ready after StopAll = %d, want %d", stoppedResp.Code, http.StatusServiceUnavailable)
 	}
 }
 

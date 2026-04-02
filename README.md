@@ -259,6 +259,42 @@ docker compose -f docker/docker-compose.yml --profile launcher up -d
 </details>
 
 <details>
+<summary><b>Railway (Gateway-only, no WebUI)</b></summary>
+
+This repository includes a Railway-ready deployment path for running `picoclaw gateway` without the WebUI launcher.
+
+```bash
+# 1. Link your project/service in Railway
+railway link
+
+# 2. Set the minimum runtime variables
+railway variables --set "PICOCLAW_HOME=/data"
+railway variables --set "PICOCLAW_GATEWAY_HOST=0.0.0.0"
+railway variables --set "PICOCLAW_GATEWAY_PORT=8080"
+
+# 3. Deploy from this repository
+railway up
+```
+
+Recommended next steps after the first deploy:
+
+- Add a volume mounted at `/data` to persist `config.json`, `.security.yml`, logs, and `workspace/`
+- Add channel credentials, for example:
+  `PICOCLAW_CHANNELS_TELEGRAM_ENABLED=true`
+  `PICOCLAW_CHANNELS_TELEGRAM_TOKEN=123456:ABC...`
+- For env-only model setup on Railway, prefer the split variables:
+  `PICOCLAW_DEFAULT_MODEL=gpt-4.1-mini`
+  `PICOCLAW_DEFAULT_MODEL_API_KEY=sk-...`
+  `PICOCLAW_DEFAULT_MODEL_API_BASE=https://your-openai-compatible-base/v1`
+- Optional if you want a custom alias different from the model ID:
+  `PICOCLAW_DEFAULT_MODEL_NAME=railway-openai`
+- Copy `config/config.railway.example.json` to `/data/config.json` and add a valid default model
+
+The Railway entrypoint starts the gateway with `--allow-empty` by default so the service can boot before your model and channel variables are finished. Set `PICOCLAW_GATEWAY_ALLOW_EMPTY=false` after configuration is complete if you want strict startup validation.
+
+</details>
+
+<details>
 <summary><b>macOS — First Launch Security Warning</b></summary>
 
 macOS may block `picoclaw-launcher` on first launch because it is downloaded from the internet and not notarized through the Mac App Store.

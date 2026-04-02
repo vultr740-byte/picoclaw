@@ -259,6 +259,42 @@ docker compose -f docker/docker-compose.yml --profile launcher up -d
 </details>
 
 <details>
+<summary><b>Railway（仅 Gateway，无 WebUI）</b></summary>
+
+本仓库已经包含适用于 Railway 的部署方式，可直接运行 `picoclaw gateway`，不依赖 WebUI launcher。
+
+```bash
+# 1. 在 Railway 中关联项目 / 服务
+railway link
+
+# 2. 先设置最小运行变量
+railway variables --set "PICOCLAW_HOME=/data"
+railway variables --set "PICOCLAW_GATEWAY_HOST=0.0.0.0"
+railway variables --set "PICOCLAW_GATEWAY_PORT=8080"
+
+# 3. 直接从当前仓库部署
+railway up
+```
+
+首次部署后建议继续完成：
+
+- 添加一个挂载到 `/data` 的 Volume，用于持久化 `config.json`、`.security.yml`、日志和 `workspace/`
+- 添加频道环境变量，例如：
+  `PICOCLAW_CHANNELS_TELEGRAM_ENABLED=true`
+  `PICOCLAW_CHANNELS_TELEGRAM_TOKEN=123456:ABC...`
+- 如果你希望完全通过 Railway 环境变量配置模型，优先使用拆分变量：
+  `PICOCLAW_DEFAULT_MODEL=gpt-4.1-mini`
+  `PICOCLAW_DEFAULT_MODEL_API_KEY=sk-...`
+  `PICOCLAW_DEFAULT_MODEL_API_BASE=https://your-openai-compatible-base/v1`
+- 如果你想让别名和模型 ID 不同，可选再加：
+  `PICOCLAW_DEFAULT_MODEL_NAME=railway-openai`
+- 将 `config/config.railway.example.json` 复制为 `/data/config.json`，并补充可用的默认模型配置
+
+Railway 入口脚本默认会以 `--allow-empty` 启动 gateway，这样在你还没补完模型和频道变量前，服务也能先启动。等配置完成后，可将 `PICOCLAW_GATEWAY_ALLOW_EMPTY=false` 以启用严格启动校验。
+
+</details>
+
+<details>
 <summary><b>macOS — 首次启动安全警告</b></summary>
 
 macOS 可能会在首次启动时拦截 `picoclaw-launcher`，因为它从互联网下载，未经 Mac App Store 公证。
@@ -615,8 +651,4 @@ Discord: <https://discord.gg/V4sAZ9XWpN>
 
 WeChat:
 <img src="assets/wechat.png" alt="WeChat group QR code" width="512">
-
-
-
-
 
